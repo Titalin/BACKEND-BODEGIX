@@ -5,6 +5,7 @@ const express = require('express');
 const cors = require('cors');
 const dns = require('dns').promises;
 const net = require('net');
+const mysql = require('mysql2/promise');
 
 const { sequelize } = require('./models/index');
 const { connectMongo } = require('./config/mongo');
@@ -32,16 +33,16 @@ const qrRoutes = require('./routes/qrRoutes');
 
 const app = express();
 
-// Middlewares
+// -------------------- Middlewares --------------------
 app.use(cors());
 app.use(express.json());
 
-// ---- Health & Diagnóstico (no dependen de DB) ----
+// -------------------- Health & Diagnostics --------------------
 app.get('/', (_req, res) => res.json({ ok: true }));
 app.get('/health', (_req, res) => res.json({ ok: true, uptime: process.uptime() }));
 app.get('/healthz', (_req, res) => res.status(200).send('ok'));
 
-// Diagnóstico de red a MySQL (desde Render)
+// Probar conectividad TCP al host/puerto de MySQL (sin Sequelize)
 async function tcpProbe(host, port, timeoutMs = 7000) {
   const { address } = await dns.lookup(host);
   return await new Promise((resolve) => {
@@ -64,7 +65,7 @@ app.get('/tcpcheck', async (_req, res) => {
   }
 });
 
-// Verificación rápida de Sequelize (sin sync)
+// Verificación rápida de Sequelize (no hace sync)
 app.get('/dbcheck', async (_req, res) => {
   try {
     await sequelize.authenticate();
@@ -74,7 +75,39 @@ app.get('/dbcheck', async (_req, res) => {
   }
 });
 
-// --- Monta QR primero ---
+// Verificación directa con mysql2/promise (útil para ver errores de SSL/credenciales/db)
+app.get('/mysql2check', async (_req, res) => {
+  try {
+    // Intenta usar CA si está cargado en Secret Files como /etc/secrets/ca.pem
+    let ssl;
+    try {
+      const fs = require('fs');
+      const ca = fs.readFileSync('/etc/secrets/ca.pem');
+      ssl = { ca, servername: process.env.DB_HOST };
+    } catch (_) {
+      ssl = { rejectUnauthorized: false, minVersion: 'TLSv1.2' };
+    }
+
+    const conn = await mysql.createConnection({
+      host: process.env.DB_HOST,
+      port: Number(process.env.DB_PORT) || 3306,
+      user: process.env.DB_USER,
+      password: process.env.DB_PASSWORD,
+      database: process.env.DB_NAME,
+      ssl,
+      connectTimeout: 15000,
+    });
+    await conn.ping();
+    const [rows] = await conn.query('SELECT CURRENT_USER() as user, DATABASE() as db, VERSION() as version');
+    await conn.end();
+    res.json({ ok: true, info: rows[0] });
+  } catch (e) {
+    res.status(500).send(e.stack || String(e));
+  }
+});
+
+// -------------------- Montaje de rutas --------------------
+// Monta QR primero (tokens/commands)
 app.use('/api', qrRoutes);
 
 // Rutas MySQL
@@ -96,26 +129,29 @@ app.use('/api', lockersSensorsRoutes);
 app.use('/api/temperaturas', temperaturasRouter);
 app.use('/api', temperaturaCompat);
 
-// Conexión y arranque
+// -------------------- Conexión y arranque --------------------
 const PORT = process.env.PORT || 5000;
-const MUST_CONNECT = process.env.BOOT_WITHOUT_DB !== 'true'; // si es true, arranca sin MySQL
+// Si BOOT_WITHOUT_DB=true, arranca sin MySQL (útil para diagnosticar en Render)
+const MUST_CONNECT = process.env.BOOT_WITHOUT_DB !== 'true';
 
 (async () => {
   try {
     if (MUST_CONNECT) {
-      // Primero verifica que el host/puerto sean alcanzables
+      // Chequeo TCP previo (solo log informativo)
       try {
         const host = process.env.DB_HOST;
         const port = Number(process.env.DB_PORT) || 3306;
         const probe = await tcpProbe(host, port);
-        if (!probe.ok) {
-          throw new Error(`TCP a MySQL falló (${host}:${port}) -> ${probe.error || 'UNKNOWN'}`);
+        if (probe.ok) {
+          console.log(`🔌 TCP OK a MySQL ${host}:${port} (${probe.ip})`);
+        } else {
+          console.warn(`⚠️ TCP a MySQL falló (${host}:${port}) -> ${probe.error || 'UNKNOWN'}`);
         }
-        console.log(`🔌 TCP OK a MySQL ${host}:${port} (${probe.ip})`);
       } catch (e) {
-        console.warn('⚠️  tcpcheck previo falló:', e.message);
+        console.warn('⚠️ tcpcheck previo falló:', e.message);
       }
 
+      // Autenticar y sincronizar Sequelize
       await sequelize.authenticate();
       console.log('✅ MySQL reachable');
       await sequelize.sync({ alter: false });
@@ -124,7 +160,7 @@ const MUST_CONNECT = process.env.BOOT_WITHOUT_DB !== 'true'; // si es true, arra
       console.warn('⚠️ BOOT_WITHOUT_DB=true → arrancando sin conectar a MySQL');
     }
 
-    // MongoDB
+    // Conexión a MongoDB
     await connectMongo(process.env.MONGO_URI || 'mongodb://127.0.0.1:27017/lockers_iot');
     console.log('✅ Conectado a MongoDB');
 
@@ -173,7 +209,7 @@ const MUST_CONNECT = process.env.BOOT_WITHOUT_DB !== 'true'; // si es true, arra
   }
 })();
 
-// Manejo de errores no capturados
+// -------------------- Manejo de errores no capturados --------------------
 process.on('unhandledRejection', (reason) => {
   console.error('🧨 UnhandledRejection:', reason);
 });
