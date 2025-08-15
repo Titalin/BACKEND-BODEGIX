@@ -1,20 +1,11 @@
 // models/QrSession.js
-const { Schema, model } = require('mongoose');
+const mongoose = require('mongoose');
 
-const QrSessionSchema = new Schema({
-  code: { type: String, required: true, unique: true, index: true }, // RAW del QR
-  locker_id: { type: String, required: true, index: true },          // LOCKER_XXX
-  empresa_id: { type: String, required: false },
-  consumed: { type: Boolean, default: false, index: true },
-  used_at: { type: Date },
-  expires_at: { type: Date, required: true, index: true },           // TTL absoluto
-  created_at: { type: Date, default: Date.now, index: true },
-}, {
-  versionKey: false,
-  collection: 'qr_sessions'
-});
+const QrSessionSchema = new mongoose.Schema({
+  code:       { type: String, required: true },
+  status:     { type: String, enum: ['NEW','USED','EXPIRED'], default: 'NEW' },
+  // TTL por fecha exacta; NO agregues index:true ni schema.index duplicado
+  expires_at: { type: Date, required: true, expires: 0 },
+}, { timestamps: true });
 
-// TTL (expira exactamente en expires_at)
-QrSessionSchema.index({ expires_at: 1 }, { expireAfterSeconds: 0 });
-
-module.exports = model('QrSession', QrSessionSchema);
+module.exports = mongoose.model('QrSession', QrSessionSchema);

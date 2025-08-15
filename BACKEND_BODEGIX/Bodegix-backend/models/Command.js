@@ -1,18 +1,12 @@
 // models/Command.js
-const { Schema, model, Types } = require('mongoose');
+const mongoose = require('mongoose');
 
-const CommandSchema = new Schema({
-  locker_id: { type: String, required: true, index: true },         // LOCKER_XXX
-  action: { type: String, enum: ['OPEN'], required: true },
-  status: { type: String, enum: ['pending', 'done'], default: 'pending', index: true },
-  session_id: { type: Types.ObjectId, ref: 'QrSession' },
-  created_at: { type: Date, default: Date.now, index: true },
-  ack_at: { type: Date },
-}, {
-  versionKey: false,
-  collection: 'commands'
-});
+const CommandSchema = new mongoose.Schema({
+  locker_id:  { type: Number, required: true },
+  command:    { type: String, enum: ['OPEN','CLOSE'], required: true },
+  state:      { type: String, enum: ['PENDING','SENT','EXPIRED'], default: 'PENDING' },
+  // Igual que arriba: SOLO una definición
+  expires_at: { type: Date, required: true, expires: 0 },
+}, { timestamps: true });
 
-CommandSchema.index({ locker_id: 1, status: 1, created_at: 1 });
-
-module.exports = model('Command', CommandSchema);
+module.exports = mongoose.model('Command', CommandSchema);
