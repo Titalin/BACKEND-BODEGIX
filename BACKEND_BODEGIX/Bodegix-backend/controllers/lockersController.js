@@ -102,15 +102,19 @@ exports.createLocker = async (req, res) => {
   }
 };
 
+// controllers/lockersController.js
 exports.updateLocker = async (req, res) => {
   try {
     const { id } = req.params;
+
+    const row = await Locker.findByPk(id);
+    if (!row) return res.status(404).json({ error: 'Locker no encontrado' });
+
     const {
-      // OJO: NO permitimos cambiar 'identificador' desde el body
       ubicacion,
       estado,
       tipo,
-      empresa_id,
+      empresa_id,   
       usuario_id,
       temp_min,
       temp_max,
@@ -119,31 +123,26 @@ exports.updateLocker = async (req, res) => {
       peso_max
     } = req.body;
 
-    const [updated] = await Locker.update({
-      ubicacion,
-      estado,
-      tipo,
-      empresa_id,
-      usuario_id,
-      temp_min,
-      temp_max,
-      hum_min,
-      hum_max,
-      peso_max
-    }, {
-      where: { id }
-    });
+    const patch = {};
+    if (ubicacion !== undefined) patch.ubicacion = ubicacion;
+    if (estado !== undefined)    patch.estado    = estado;
+    if (tipo !== undefined)      patch.tipo      = tipo;
+    if (empresa_id !== undefined) patch.empresa_id = empresa_id;
+    if (usuario_id !== undefined) patch.usuario_id = usuario_id;
+    if (temp_min !== undefined)   patch.temp_min = temp_min;
+    if (temp_max !== undefined)   patch.temp_max = temp_max;
+    if (hum_min !== undefined)    patch.hum_min  = hum_min;
+    if (hum_max !== undefined)    patch.hum_max  = hum_max;
+    if (peso_max !== undefined)   patch.peso_max = peso_max;
 
-    if (!updated) {
-      return res.status(404).json({ error: 'Locker no encontrado' });
-    }
-
-    const updatedLocker = await Locker.findByPk(id);
-    res.json(updatedLocker);
+    await row.update(patch);              
+    const updated = await Locker.findByPk(id);
+    return res.json(updated);             
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    return res.status(500).json({ error: error.message });
   }
 };
+
 
 exports.deleteLocker = async (req, res) => {
   try {
