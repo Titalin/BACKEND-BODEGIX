@@ -1,4 +1,3 @@
-// controllers/suscripcionesController.js
 const Suscripcion = require('../models/Suscripcion');
 const db = require('../config/db');
 
@@ -34,6 +33,7 @@ exports.getSuscripcionById = async (req, res) => {
 
 // POST /api/suscripciones
 exports.createSuscripcion = async (req, res) => {
+  const t = await db.transaction();
   try {
     const { empresa_id, plan_id, fecha_inicio, fecha_fin, estado } = req.body;
 
@@ -41,19 +41,41 @@ exports.createSuscripcion = async (req, res) => {
       return res.status(400).json({ error: 'Faltan campos obligatorios' });
     }
 
-    const suscripcion = await Suscripcion.create({
-      empresa_id,
-      plan_id,
-      fecha_inicio,
-      fecha_fin,
-      estado
-    });
+    // Crear la suscripción con el estado recibido
+    const [result] = await db.query(
+      `INSERT INTO suscripciones (empresa_id, plan_id, fecha_inicio, fecha_fin, estado)
+       VALUES (?, ?, ?, ?, ?)`,
+      [empresa_id, plan_id, fecha_inicio, fecha_fin, estado],
+      { transaction: t }
+    );
 
-    res.status(201).json(suscripcion);
+    const suscripcionId = result.insertId;
+
+    // Si viene activa, activamos con SP seguro
+    if (estado === 'activa') {
+      await db.query(
+        `CALL sp_activar_suscripcion_segura(?)`,
+        [suscripcionId],
+        { transaction: t }
+      );
+    }
+
+    await t.commit();
+
+    // Recuperamos la suscripción ya ajustada
+    const [rows] = await db.query(
+      `SELECT * FROM suscripciones WHERE id = ?`,
+      [suscripcionId]
+    );
+
+    return res.status(201).json(rows[0]);
   } catch (error) {
+    await t.rollback();
+    console.error('Error en createSuscripcion:', error.message);
     res.status(500).json({ error: error.message });
   }
 };
+
 
 // PUT /api/suscripciones/:id
 exports.updateSuscripcion = async (req, res) => {
